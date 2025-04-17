@@ -1,5 +1,7 @@
 # ERA5 Interactive Climate Explorer
 
+## 🌍 Context and Purpose
+
 This project is a web-based tool to explore reanalysis climate data from the ERA5 dataset. It offers an interactive and intuitive interface for scientists, analysts, and technical users to:
 
 - Visualize spatial climate fields.

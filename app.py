@@ -3,7 +3,7 @@ import pandas as pd
 
 from utils.data_loader import load_era5_data, preprocess_era5_data
 from utils.aggregations import aggregate_time
-from utils.map_plot import plot_spatial_map
+from components.map_plot import plot_spatial_map
 
 
 import streamlit as st

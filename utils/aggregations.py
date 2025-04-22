@@ -1,64 +1,74 @@
 import xarray as xr
 import pandas as pd
 
-def aggregate_time(data: xr.DataArray, method: str = "mean", time_dim: str = "time") -> xr.DataArray:
+def get_aggregation_time(ds: xr.Dataset, type: str) -> xr.Dataset:
     """
-    Aggregates data over the time dimension using the specified method.
-
-    Parameters:
-        data (xr.DataArray): Input data to aggregate.
-        method (str): Aggregation method ('mean', 'sum', 'max', 'min').
-        time_dim (str): Name of the time dimension (default: 'time').
-
-    Returns:
-        xr.DataArray: Aggregated data.
+    Get the aggregation time from the dataset. 
+    If type is 'mean', return the mean of the dataset. 
+    If type is 'sum', return the sum of the dataset.
     """
-    if time_dim not in data.dims:
-        raise ValueError(f"Time dimension '{time_dim}' not found in the data.")
-
-    if method == "mean":
-        return data.mean(dim=time_dim)
-    elif method == "sum":
-        return data.sum(dim=time_dim)
-    elif method == "max":
-        return data.max(dim=time_dim)
-    elif method == "min":
-        return data.min(dim=time_dim)
+    if type == 'mean':
+        return ds.mean(dim='time')
+    elif type == 'sum':
+        return ds.sum(dim='time')
     else:
-        raise ValueError(f"Unsupported aggregation method: {method}")
+        raise ValueError("Invalid aggregation type. Use 'mean' or 'sum'.")
 
-
-def aggregate_space(data: xr.DataArray, region_mask: xr.DataArray) -> xr.DataArray:
+def select_dates(ds: xr.Dataset, start_date: str, end_date: str) -> xr.Dataset:
     """
-    Aggregates data over a spatial region defined by a mask.
-
-    Parameters:
-        data (xr.DataArray): Input data to aggregate.
-        region_mask (xr.DataArray): Boolean mask defining the region (True for included points).
-
-    Returns:
-        xr.DataArray: Aggregated data over the region.
+    Select a date range from the dataset. 
+    The date range is defined by the start and end dates.
     """
-    if data.shape != region_mask.shape:
-        raise ValueError("Data and region mask must have the same shape.")
+    ds = ds.sel(time=slice(start_date, end_date))
+    return ds
 
-    masked_data = data.where(region_mask)
-    return masked_data.mean(dim=["latitude", "longitude"], skipna=True)
-
-
-def aggregate_to_dataframe(data: xr.DataArray, time_dim: str = "valid_time") -> pd.DataFrame:
+def select_region(ds: xr.Dataset, lat_range: tuple, lon_range: tuple) -> xr.Dataset:
     """
-    Converts aggregated data into a Pandas DataFrame for export or plotting.
-
-    Parameters:
-        data (xr.DataArray): Aggregated data.
-        time_dim (str): Name of the time dimension (default: 'time').
-
-    Returns:
-        pd.DataFrame: DataFrame with time as index and values as columns.
+    Select a region from the dataset. 
+    The region is defined by the latitude and longitude ranges.
     """
-    if time_dim not in data.dims:
-        raise ValueError(f"Time dimension '{time_dim}' not found in the data.")
+    ds = ds.sel(lat=slice(lat_range[0], lat_range[1]), lon=slice(lon_range[0], lon_range[1]))
+    return ds
 
-    df = data.to_dataframe().reset_index()
-    return df.pivot(index=time_dim, columns=data.name, values=data.name)
+def get_series(ds: xr.Dataset, lat: float, lon: float) -> pd.Series:
+    """
+    Get a specific series from the dataset. 
+    The series is defined by the latitude and longitude coordinates.
+    """
+    layer = ds.sel(lat=lat, lon=lon, method='nearest').squeeze()
+    series = layer.to_dataframe().reset_index()
+    series.set_index('time', inplace=True)
+    return series['tp']  # Assuming 'tp' is the variable name in the dataset
+
+def get_layer(ds: xr.Dataset, 
+              start_date : str,
+                end_date : str,
+                aggregation : str = 'mean',) -> xr.Dataset:
+    
+
+    """
+    Get a specific layer from the dataset. 
+    """
+    ds = select_dates(ds, start_date, end_date)
+    layer = get_aggregation_time(ds, aggregation)
+    return layer
+
+def get_series(ds: xr.Dataset, 
+               start_date : str,
+                end_date : str) -> pd.Series:
+    
+    """
+    Get a specific series from the dataset.
+    """
+    ds = select_dates(ds, start_date, end_date)
+    series = ds.mean(dim=['latitude', 'longitude'])
+
+    #series to pandas series
+    series = series.to_dataframe().reset_index()
+    series.set_index('time', inplace=True)
+    return series
+
+
+
+
+

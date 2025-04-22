@@ -3,7 +3,7 @@ import pandas as pd
 
 
 
-def plot_time_series(da, units=""):
+def plot_time_series(da: pd.Series, units=""):
     """
     Crea un gráfico de series temporales usando plotly.
     
@@ -11,16 +11,15 @@ def plot_time_series(da, units=""):
         da: xarray DataArray con dimensión temporal
         units: unidades de la variable para mostrar en el eje y
     """
-    # Calculamos el promedio espacial para cada tiempo
-    series = da.mean(dim=['latitude', 'longitude'])
+
     
     # Creamos la figura
     fig = go.Figure()
     
     fig.add_trace(
         go.Scatter(
-            x=series.valid_time.values,
-            y=series.values,
+            x=da.index,
+            y=da.values,
             mode='lines',
             name='Promedio espacial',
             line=dict(color='#1f77b4', width=2)

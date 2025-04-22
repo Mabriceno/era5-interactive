@@ -1,79 +1,139 @@
 import xarray as xr
 import pandas as pd
 import os
+import json
+from pathlib import Path
+from utils.aggregations import get_layer, get_series
+from database.db_utils import get_path
 
-def load_era5_data(file_path: str) -> xr.Dataset:
-    """
-    Loads ERA5 data from a netCDF file.
+def get_file_name(request: dict) -> str:
+    """Generate a str with any keys from the request dictionary."""
+    # Sort dictionary keys to ensure consistent naming
+    sorted_items = sorted(request.items())
+    # Create a string joining key-value pairs
+    return "_".join([f"{k}-{v}" for k, v in sorted_items])
 
-    Parameters:
-        file_path (str): Path to the netCDF file containing ERA5 data.
-
-    Returns:
-        xr.Dataset: Loaded ERA5 dataset.
-    """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"The file {file_path} does not exist.")
+def load_dataset(path: str) -> xr.Dataset:
+    """Load a dataset from a given path. Get all nc file names in path, sort by date in name and concatenate with xarray"""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Path {path} does not exist")
     
-    try:
-        dataset = xr.open_dataset(file_path)
-        return dataset
-    except Exception as e:
-        raise RuntimeError(f"Error loading ERA5 data: {e}")
+    # Get all .nc files in the directory
+    nc_files = [f for f in os.listdir(path) if f.endswith('.nc')]
+    print(f"Found {len(nc_files)} .nc files in {path}")
 
-
-def load_csv_data(file_path: str) -> pd.DataFrame:
-    """
-    Loads time series data from a CSV file.
-
-    Parameters:
-        file_path (str): Path to the CSV file.
-
-    Returns:
-        pd.DataFrame: Loaded DataFrame with time series data.
-    """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"The file {file_path} does not exist.")
+    if not nc_files:
+        raise FileNotFoundError(f"No .nc files found in {path}")
     
-    try:
-        data = pd.read_csv(file_path, parse_dates=["date"])
-        return data
-    except Exception as e:
-        raise RuntimeError(f"Error loading CSV data: {e}")
-
-
-def preprocess_era5_data(dataset: xr.Dataset, variable: str) -> xr.DataArray:
-    """
-    Extracts and preprocesses a specific variable from the ERA5 dataset.
-
-    Parameters:
-        dataset (xr.Dataset): ERA5 dataset.
-        variable (str): Variable to extract (e.g., 't2m', 'tp').
-
-    Returns:
-        xr.DataArray: Preprocessed DataArray for the selected variable.
-    """
-    if variable not in dataset:
-        raise ValueError(f"Variable '{variable}' not found in the dataset.")
+    # Sort files by date in filename
+    nc_files.sort()
+    # Create full paths
+    full_paths = [os.path.join(path, f) for f in nc_files]
     
-    data = dataset[variable]
-    data = data.squeeze()  # Remove any singleton dimensions
-    return data
+    # Open and concatenate all datasets
+    datasets = [xr.open_dataset(f) for f in full_paths]
+    return xr.concat(datasets, dim='time')
 
 
-def preprocess_csv_data(data: pd.DataFrame) -> pd.DataFrame:
+def load_dataset_lazy(path, chunks={"time": -1}):
     """
-    Preprocesses time series data from a CSV file.
-
-    Parameters:
-        data (pd.DataFrame): DataFrame with raw time series data.
-
-    Returns:
-        pd.DataFrame: Cleaned and formatted DataFrame.
+    Carga perezosa usando Dask para no saturar RAM.
+    - Agrupa todos los .nc en la carpeta.
+    - Renombra/ajusta coordenadas en un preprocess.
     """
-    if "date" not in data.columns:
-        raise ValueError("The CSV file must contain a 'date' column.")
+    pattern = os.path.join(path, "*.nc")
+
+    def _preprocess(ds):
+        #rename valid_time to time
+        if 'valid_time' in ds.coords:
+            ds = ds.rename({"valid_time": "time"})
+
+        return ds
+
+    return xr.open_mfdataset(
+        pattern,
+        combine="by_coords",   # concat + merge automático
+        parallel=True,         # usa threads/processes de Dask
+        chunks=chunks,         # activa loading perezoso
+        preprocess=_preprocess
+    )
+
+def check_cache(path: str) -> bool:
+    """Check if the dataset is already cached. If it is, return True."""
+    return os.path.exists(path)
+
+def request_dataset(request: dict) -> xr.Dataset:
+    """Request a dataset from the database. First check if dataset is cached. if it is, load it from cache. 
+    If not, load it from the database and save on cache/datasets/ with the name of the request. Then return the dataset."""
+    # Get database path for the dataset
+    db_path = get_path(request['source_id'], request['var_id'])
+    if not db_path:
+        raise ValueError("Dataset not found in database")
     
-    data = data.sort_values(by="date")
-    data = data.set_index("date")
-    return data
+    # Generate cache filename
+    cache_dir = "cache/datasets"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_filename = get_file_name(request) + ".nc"
+    print(f"Cache filename: {cache_filename}")
+    cache_path = os.path.join(cache_dir, cache_filename)
+    
+    # Check cache
+    if check_cache(cache_path):
+        return xr.open_dataset(cache_path)
+    
+    print(f"Loading dataset from {db_path}...")
+    # Load dataset from source
+    ds = load_dataset_lazy(db_path)
+    print(f"Loaded dataset with {len(ds.time)} time steps")
+    # Save to cache
+    ds.to_netcdf(cache_path)
+    
+    return ds
+
+def request_layer(ds: xr.Dataset, request: dict) -> xr.Dataset:
+    """Request a specific layer from the dataset. First check if layer is cached. if it is, load it from cache. 
+    If not, get from aggregations.get_layer and save on cache/layers/ with the name of the request. Then return the layer."""
+    # Generate cache filename
+    cache_dir = "cache/layers"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_filename = get_file_name(request) + ".nc"
+    cache_path = os.path.join(cache_dir, cache_filename)
+    
+    # Check cache
+    if check_cache(cache_path):
+        return xr.open_dataset(cache_path)
+    
+    # Get layer from dataset
+    layer = get_layer(
+        ds,
+        start_date=request['start_date'],
+        end_date=request['end_date'],
+        aggregation=request.get('aggregation', 'mean')
+    )
+    
+    # Save to cache
+    layer.to_netcdf(cache_path)
+    
+    return layer
+
+def request_series(ds: xr.Dataset, request: dict) -> pd.Series:
+    """Request a specific series from the dataset. First check if series is cached. if it is, load it from cache. 
+    If not, get from aggregations.get_series and save on cache/series/ with the name of the request. Then return the series."""
+    # Generate cache filename
+    cache_dir = "cache/series"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_filename = get_file_name(request) + ".csv"
+    cache_path = os.path.join(cache_dir, cache_filename)
+    
+    # Check cache
+    if check_cache(cache_path):
+        return pd.read_csv(cache_path, index_col='time', parse_dates=True)['value']
+    
+    # Get series from dataset
+    series = get_series(
+        ds,
+        start_date=request['start_date'],
+        end_date=request['end_date'],
+    )
+    
+    return series

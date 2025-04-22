@@ -78,7 +78,8 @@ def plot_spatial_map(
 
     lon = data[lon_name].values
     lat = data[lat_name].values
-    z   = data.values
+    main_var = list(data.data_vars)[0]
+    z = data[main_var].values
 
     fig = go.Figure()
 
@@ -137,7 +138,7 @@ def plot_spatial_map(
                     size=3,                # ≈ pixel
                     colorscale=color_scale,
                     color=z_f,
-                    colorbar=dict(title=data.name or "value"),
+                    colorbar=dict(title='ejemplo' or "value"),
                     showscale=True,
                 ),
                 hovertemplate=(

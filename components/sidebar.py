@@ -17,7 +17,7 @@ def render_sidebar(ds):
     st.sidebar.markdown("Configure la visualización de datos.")
 
     # 1️⃣ Variable
-    available_labels = [lbl for lbl, var in ERA5_VARIABLES.items() if var in ds.data_vars]
+    available_labels = [lbl for lbl, var in ERA5_VARIABLES.items() if var in ds.keys()]
     if not available_labels:
         st.sidebar.error("Ninguna variable del diccionario está en el archivo NetCDF.")
         st.stop()
